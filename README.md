@@ -138,12 +138,34 @@ Apple Silicon and Intel.
 `./build.sh --zip` writes `build/On-Air.zip`, built with `ditto` so the signature
 survives.
 
-**Be aware of what the recipient sees.** Unless it is signed with a paid Apple
-Developer ID and notarised, macOS will refuse to open it — on recent versions the
-message is "Apple could not verify 'On Air' is free of malware", with no obvious
-way past it. They have to either right-click the app and choose **Open**, or go to
-System Settings › Privacy & Security and click **Open Anyway**. Tell them to
-expect that, or they will assume the app is broken.
+**What the recipient sees, and exactly what to tell them.** Unless the app is
+signed with a paid Apple Developer ID and notarised, macOS refuses to open it:
+*"Apple could not verify 'On Air' is free of malware."*
+
+Note that the old advice — Control-click the app and choose **Open** — **no longer
+works**. Apple removed that bypass in macOS 15 Sequoia. Anyone repeating it (or any
+tool trained on pre-2024 answers) will send you down a dead end. On macOS 15 and
+later the steps are:
+
+1. Double-click the app. Click **Done** on the warning.
+2. Open **System Settings › Privacy & Security**, scroll to **Security**. There is a
+   line reading *"On Air" was blocked to protect your Mac* with an **Open Anyway**
+   button.
+3. Click **Open Anyway**, confirm, and authenticate.
+
+Only step 2 works — and only if attempted shortly after step 1, since the button
+appears in response to the blocked launch.
+
+The terminal equivalent, if you prefer:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/On Air.app"
+```
+
+Worth saying plainly: that command is also precisely what malware distributors ask
+people to run, so some recipients will decline on principle, and they are not being
+unreasonable. It is a trust decision rather than a technical obstacle. Leading with
+the source repo sidesteps it entirely — code someone can read needs no such leap.
 
 To remove the friction properly you need an Apple Developer ID ($99/year):
 
