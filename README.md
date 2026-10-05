@@ -60,11 +60,17 @@ record from a child process called "Helper") are resolved up to their parent app
 
 Apple's change listeners for these properties are documented as unreliable —
 spurious camera callbacks since macOS 12, and input-running listeners that never
-fire at all — so this polls once a second instead of subscribing. Each poll is
-one small request to the system audio service per device and per process that
-has used audio (about 9 ms in total with ~35 of them), done on a background
-thread so a busy audio service can never stall the menu or the banner. Neither
-the camera nor your call app notices.
+fire at all — so this mostly polls. (Tested: the per-app "recording input"
+notification never fired, while polling caught every change.) Each poll is one
+small request to the system audio service per device and per process that has
+used audio, about 9 ms in total with ~35 of them, done on a background thread so a
+busy audio service can never stall the menu or the banner.
+
+The one notification that does work is an audio device's "running somewhere", so
+a mic device starting or stopping triggers a check at once, and the full poll runs
+only every three seconds to catch the rest: cameras, and apps on Bluetooth mics.
+That keeps the audio service's extra load under 1% of its CPU, and neither the
+camera nor your call app notices.
 
 **None of this requires any permission**, and the app never opens a camera or mic
 itself, so it never lights the orange/green privacy dot on its own.
@@ -72,9 +78,10 @@ itself, so it never lights the orange/green privacy dot on its own.
 ## Meetings, automatically
 
 There is nothing to start or stop. The bar raises itself the moment a camera or
-mic goes live and takes itself down when they stop, polling once a second.
+mic goes live and takes itself down when they stop.
 
-Going on air is instant. Coming off air waits two seconds, because apps genuinely
+Going on air takes at most three seconds, and is usually immediate for a wired or
+built-in mic. Coming off air waits a further two seconds, because apps genuinely
 release the microphone when you hit mute — without the delay the bar would flicker
 every time you muted and unmuted mid-call.
 
@@ -125,7 +132,7 @@ Run it from a terminal with tracing on to see exactly what the detector sees:
 ONAIR_DEBUG=1 "/Applications/On Air.app/Contents/MacOS/OnAir"
 ```
 
-It prints a line a second:
+It prints a line for every check, every three seconds or on a device change:
 
 ```
 [11:07:47] watchCam=true watchMic=true cam=false mic=true live=true showing=true apps=["Google Chrome"] read=8.6ms

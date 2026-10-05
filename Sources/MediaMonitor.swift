@@ -31,7 +31,13 @@ struct AudioApp: Equatable {
 /// even while they are recording, so signal 3 backs it up — and as a bonus it names
 /// the app doing the recording. Apple's own listeners for these properties are
 /// documented as unreliable (spurious camera callbacks on macOS 12+, input-running
-/// listeners that never fire), so this polls on a timer instead of subscribing.
+/// listeners that never fire), so this polls on a timer.
+///
+/// The one listener that does work is an audio device's "running somewhere": it
+/// fired within the same second as polling for every change we saw. So an input
+/// device starting or stopping triggers a read straight away, and the timer only
+/// needs to run every few seconds to catch everything else — cameras, and apps
+/// on Bluetooth mics, which their device does not report.
 ///
 /// None of these reads requires TCC permission and none of them opens a device, so
 /// this app never lights the orange/green indicator itself.
@@ -47,9 +53,16 @@ final class MediaMonitor {
     /// How long the last hardware read took, for the debug trace.
     private(set) var lastReadDuration: TimeInterval = 0
 
-    private let queue = DispatchQueue(label: "com.local.onair.monitor", qos: .utility)
-    private let reader = HardwareReader()   // only ever touched on `queue`
+    private let queue: DispatchQueue
+    private let reader: HardwareReader      // only ever touched on `queue`
     private var timer: DispatchSourceTimer?
+    private var readPending = false         // only ever touched on `queue`
+
+    init() {
+        let queue = DispatchQueue(label: "com.local.onair.monitor", qos: .utility)
+        self.queue = queue
+        reader = HardwareReader(listeningOn: queue)
+    }
 
     /// The last fingerprint handed to `onChange`.
     private var lastEmitted: [String] = []
@@ -102,17 +115,35 @@ final class MediaMonitor {
 
     // MARK: - Polling
 
-    func start(interval: TimeInterval = 1.0) {
-        let t = DispatchSource.makeTimerSource(queue: queue)
-        // Leeway lets the system batch our wakeups with others; a banner that rises
-        // 100 ms later costs nothing.
-        t.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(100))
-        t.setEventHandler { [weak self, reader] in
-            let snapshot = reader.read()
-            DispatchQueue.main.async { self?.apply(snapshot) }
+    /// Every read costs coreaudiod one request per audio process, ~35 here, so the
+    /// timer is the slow safety net and device listeners provide the speed.
+    func start(interval: TimeInterval = 3.0) {
+        queue.async { [weak self] in
+            self?.reader.onDeviceChange = { [weak self] in self?.readSoon() }
         }
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        // Leeway lets the system batch our wakeups with others.
+        t.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(250))
+        t.setEventHandler { [weak self] in self?.read() }
         t.resume()
         timer = t
+    }
+
+    /// On `queue`: read now and hand the result to the main thread.
+    private func read() {
+        let snapshot = reader.read()
+        DispatchQueue.main.async { [weak self] in self?.apply(snapshot) }
+    }
+
+    /// On `queue`: read shortly, folding a burst of device notifications (a call
+    /// starting several devices at once, say) into a single read.
+    private func readSoon() {
+        guard !readPending else { return }
+        readPending = true
+        queue.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.readPending = false
+            self?.read()
+        }
     }
 
     func stop() {
@@ -150,7 +181,8 @@ final class MediaMonitor {
 
 /// Reads cameras, mics and recording apps from the system.
 ///
-/// Not thread-safe: `MediaMonitor` uses it only from its own serial queue. A device's
+/// Not thread-safe: `MediaMonitor` uses it only from its own serial queue, which is
+/// also where its device listeners are delivered. A device's
 /// UID, name and channel layout, and a process's pid and app, never change for the
 /// life of its object ID, so those are read once and cached. Each poll then costs
 /// one read per device and per audio process for the live flag, plus the lists.
@@ -166,6 +198,62 @@ final class HardwareReader {
     private var micInfo: [AudioObjectID: DeviceInfo?] = [:]      // nil: output-only, skip
     private var cameraInfo: [CMIOObjectID: DeviceInfo] = [:]
     private var processInfo: [AudioObjectID: AudioApp?] = [:]    // nil: ourselves, skip
+
+    /// Called on the listening queue when devices come or go, or an input device
+    /// starts or stops.
+    var onDeviceChange: (() -> Void)?
+    private let listenQueue: DispatchQueue?
+    private var listeners: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
+    private var deviceListListener: AudioObjectPropertyListenerBlock?
+
+    /// With a queue, listen for device changes on it; without one (tests), only read.
+    init(listeningOn queue: DispatchQueue? = nil) {
+        listenQueue = queue
+        guard let queue else { return }
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.onDeviceChange?() }
+        var addr = Self.address(kAudioHardwarePropertyDevices)
+        if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, queue, block) == noErr {
+            deviceListListener = block
+        }
+    }
+
+    deinit {
+        guard let listenQueue else { return }
+        var running = Self.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        for (id, block) in listeners {
+            AudioObjectRemovePropertyListenerBlock(id, &running, listenQueue, block)
+        }
+        if let deviceListListener {
+            var list = Self.address(kAudioHardwarePropertyDevices)
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject), &list, listenQueue, deviceListListener)
+        }
+    }
+
+    private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+    }
+
+    /// Follow each input device's "running somewhere", and stop following devices
+    /// that have gone. A device that has gone takes its listener with it, so a
+    /// failed removal there is expected and harmless.
+    private func updateListeners(inputs: Set<AudioObjectID>) {
+        guard let listenQueue else { return }
+        var addr = Self.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        for (id, block) in listeners where !inputs.contains(id) {
+            AudioObjectRemovePropertyListenerBlock(id, &addr, listenQueue, block)
+            listeners[id] = nil
+        }
+        for id in inputs where listeners[id] == nil {
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.onDeviceChange?() }
+            if AudioObjectAddPropertyListenerBlock(id, &addr, listenQueue, block) == noErr {
+                listeners[id] = block
+            }
+        }
+    }
 
     func read() -> Snapshot {
         let start = DispatchTime.now().uptimeNanoseconds
@@ -205,20 +293,35 @@ final class HardwareReader {
     /// foreground app. The resolved id doubles as the ignore-list key, so ignoring
     /// Chrome ignores every one of its helpers.
     private static func identify(pid: pid_t, bundleID: String?) -> AudioApp {
+        // Command-line tools report an empty bundle id rather than none.
+        let bundleID = bundleID.flatMap { $0.isEmpty ? nil : $0 }
         if let bundleID {
             for candidate in parentBundleIDs(of: bundleID) {
                 if let app = NSRunningApplication.runningApplications(withBundleIdentifier: candidate)
                     .first(where: { $0.activationPolicy == .regular }),
-                   let name = app.localizedName {
+                   let name = app.localizedName, !name.isEmpty {
                     return AudioApp(pid: pid, uid: candidate, name: name)
                 }
             }
         }
-        let uid = bundleID ?? "pid-\(pid)"
-        let name = NSRunningApplication(processIdentifier: pid)?.localizedName
-            ?? bundleID?.components(separatedBy: ".").last?.capitalized
-            ?? "an app"
-        return AudioApp(pid: pid, uid: uid, name: name)
+        if let bundleID {
+            let name = NSRunningApplication(processIdentifier: pid)?.localizedName.flatMap { $0.isEmpty ? nil : $0 }
+            return AudioApp(pid: pid, uid: bundleID,
+                            name: name ?? bundleID.components(separatedBy: ".").last!.capitalized)
+        }
+        // No bundle at all, e.g. ffmpeg in a terminal: go by the executable's name,
+        // which also keeps the ignore-list key stable from one run to the next.
+        if let name = processName(pid) {
+            return AudioApp(pid: pid, uid: "process:\(name)", name: name)
+        }
+        return AudioApp(pid: pid, uid: "pid-\(pid)", name: "an app")
+    }
+
+    private static func processName(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 256)
+        guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        let name = String(cString: buffer)
+        return name.isEmpty ? nil : name
     }
 
     /// "a.b.c.d" -> ["a.b.c.d", "a.b.c", "a.b"]: the bundle id and its ancestors,
@@ -250,6 +353,7 @@ final class HardwareReader {
     private func readMicrophones() -> [Device] {
         let ids = audioObjectList(kAudioHardwarePropertyDevices)
         micInfo = micInfo.filter { ids.contains($0.key) }
+        defer { updateListeners(inputs: Set(micInfo.compactMap { $0.value == nil ? nil : $0.key })) }
 
         return ids.compactMap { id in
             let info: DeviceInfo?
