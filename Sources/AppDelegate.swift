@@ -81,13 +81,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return parts.joined(separator: "   \u{25CF}   ")
     }
 
+    private static let debugging = ProcessInfo.processInfo.environment["ONAIR_DEBUG"] == "1"
+
     /// Run with ONAIR_DEBUG=1 to trace what the detector sees, once a second.
+    /// `read=` is how long the hardware read took, off the main thread.
     private func debugLog() {
-        guard ProcessInfo.processInfo.environment["ONAIR_DEBUG"] == "1" else { return }
+        guard Self.debugging else { return }
         let stamp = Date().formatted(date: .omitted, time: .standard)
         let fields = "watchCam=\(Prefs.watchCamera) watchMic=\(Prefs.watchMic)"
             + " cam=\(monitor.cameraIsLive) mic=\(monitor.micIsLive) live=\(monitor.isLive)"
             + " showing=\(banner.isShowing) apps=\(monitor.liveAppNames)"
+            + String(format: " read=%.1fms", monitor.lastReadDuration * 1000)
         print("[\(stamp)] \(fields)")
         fflush(stdout)
     }
@@ -125,7 +129,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        monitor.poll()
+        // Built from the last reading, at most a second old. Re-reading here would
+        // block the menu on coreaudiod, which is exactly what polling off the main
+        // thread is for avoiding.
         menu.removeAllItems()
 
         // --- Status ---

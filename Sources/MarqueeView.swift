@@ -139,6 +139,9 @@ final class MarqueeView: NSView {
         animation.repeatCount = .infinity
         animation.isRemovedOnCompletion = false
         animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        // A ProMotion display would otherwise recomposite the bar 120 times a second
+        // for as long as you are live. 60 is indistinguishable for scrolling text.
+        animation.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
         scrollLayer.add(animation, forKey: Self.animationKey)
     }
 

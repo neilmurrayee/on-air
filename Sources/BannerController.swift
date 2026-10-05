@@ -156,11 +156,13 @@ final class BannerController {
         }
     }
 
-    /// The strip along the bottom of a screen that the banner should occupy.
     private func frame(for screen: NSScreen) -> NSRect {
-        let full = screen.frame
-        let visible = screen.visibleFrame
+        Self.frame(full: screen.frame, visible: screen.visibleFrame)
+    }
 
+    /// The strip along the bottom of a screen that the banner should occupy, given
+    /// the screen's full frame and the part of it not claimed by the Dock or menu bar.
+    static func frame(full: NSRect, visible: NSRect) -> NSRect {
         // How much space something (almost always the Dock) is claiming at the bottom.
         // An auto-hidden Dock still reserves a few points, hence the threshold.
         let claimedAtBottom = visible.minY - full.minY

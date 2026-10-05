@@ -60,8 +60,11 @@ record from a child process called "Helper") are resolved up to their parent app
 
 Apple's change listeners for these properties are documented as unreliable —
 spurious camera callbacks since macOS 12, and input-running listeners that never
-fire at all — so this polls once a second instead of subscribing. That costs
-nothing measurable.
+fire at all — so this polls once a second instead of subscribing. Each poll is
+one small request to the system audio service per device and per process that
+has used audio (about 9 ms in total with ~35 of them), done on a background
+thread so a busy audio service can never stall the menu or the banner. Neither
+the camera nor your call app notices.
 
 **None of this requires any permission**, and the app never opens a camera or mic
 itself, so it never lights the orange/green privacy dot on its own.
@@ -119,7 +122,7 @@ ONAIR_DEBUG=1 "/Applications/On Air.app/Contents/MacOS/OnAir"
 It prints a line a second:
 
 ```
-[11:07:47] watchCam=true watchMic=true cam=false mic=true live=true showing=true apps=["Google Chrome"]
+[11:07:47] watchCam=true watchMic=true cam=false mic=true live=true showing=true apps=["Google Chrome"] read=8.6ms
 ```
 
 If `live=true` when you are not in a meeting, find the culprit in `apps=` or in the
@@ -190,11 +193,26 @@ runtime, which notarisation requires.
 - Browsers sometimes hold the microphone open after a call ends, which keeps the
   bar up. That is technically accurate — the mic really is live — but if it annoys
   you, add the browser to **Ignore**.
-- There are no automated tests. Detection, show/hide and geometry were verified by
-  hand against real hardware; the multi-display and side-mounted-Dock paths are
-  reasoned-through but have not been exercised on real hardware.
+- The tests (see below) cover the detection logic and banner geometry with fake
+  readings, plus performance against the real hardware. Show/hide was verified by
+  hand; the multi-display and side-mounted-Dock paths are reasoned-through but have
+  not been exercised on real hardware.
 - `com.local.onair` is a placeholder bundle identifier.
 
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
+
+## Tests and performance
+
+```sh
+./build.sh --test     # logic tests, then performance budgets
+./build.sh --bench    # performance only, longer runs
+Tests/camera_ab.sh    # camera frame rate and WindowServer CPU, with and without On Air
+```
+
+The performance checks read the real hardware, so they say how this Mac is doing:
+how long a hardware read takes, and whether the main thread stays responsive while
+the monitor polls (it should be indistinguishable from idle). Neither opens a camera
+or mic, so they are safe to run during a call. `camera_ab.sh` does open the camera,
+so run it when nothing else is using it.

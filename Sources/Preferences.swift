@@ -3,7 +3,8 @@ import AppKit
 /// Everything the user can tweak, persisted in UserDefaults.
 /// Anything not exposed in the menu can be set with `defaults write com.local.onair <key> <value>`.
 enum Prefs {
-    private static let d = UserDefaults.standard
+    /// Tests point this at a scratch suite so they never touch the real settings.
+    static var d = UserDefaults.standard
 
     static func registerDefaults() {
         d.register(defaults: [
