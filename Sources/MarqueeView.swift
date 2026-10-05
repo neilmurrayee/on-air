@@ -1,12 +1,13 @@
 import AppKit
 
-/// A red bar with text scrolling right-to-left, forever.
+/// A red bar with text, either still or scrolling right-to-left forever.
 ///
 /// The text is laid out once into a single wide layer holding N copies of the
 /// message, then that layer is slid left by exactly one copy's width on an infinite
 /// `CABasicAnimation`. Because the animation runs on the render server the scroll
 /// costs no per-frame CPU, and because the shift is exactly one copy wide the loop
-/// point is invisible.
+/// point is invisible. Still, the same copies simply sit there, so the message shows
+/// on both sides of a Dock that covers the middle of the bar.
 final class MarqueeView: NSView {
 
     var text: String = "LIVE ON AIR" {
@@ -17,6 +18,8 @@ final class MarqueeView: NSView {
     private let scrollLayer = CALayer()
     private let textLayer = CATextLayer()
     private let hairlineLayer = CALayer()
+
+    static let barColor = NSColor(srgbRed: 0.85, green: 0.05, blue: 0.08, alpha: 1)
 
     private static let animationKey = "marquee"
     private var copyWidth: CGFloat = 0
@@ -38,7 +41,8 @@ final class MarqueeView: NSView {
         layer = root
         wantsLayer = true
 
-        root.backgroundColor = NSColor(srgbRed: 0.85, green: 0.05, blue: 0.08, alpha: 1).cgColor
+        root.backgroundColor = Self.barColor.cgColor
+        root.isOpaque = true
         root.masksToBounds = true
 
         // A slightly brighter hairline along the top edge so the bar reads as a
@@ -121,9 +125,15 @@ final class MarqueeView: NSView {
 
         CATransaction.commit()
 
+        guard Prefs.scroll else {
+            scrollLayer.removeAnimation(forKey: Self.animationKey)
+            copyWidth = 0
+            return
+        }
+
         // Only restart the animation if the geometry actually changed, so a relayout
         // does not visibly jump the text back to its starting position.
-        if abs(copyWidth - unitWidth) > 0.5 || scrollLayer.animation(forKey: Self.animationKey) == nil {
+        if abs(copyWidth - unitWidth) > 0.5 || !isScrolling {
             copyWidth = unitWidth
             startScrolling(by: unitWidth)
         }
@@ -139,11 +149,14 @@ final class MarqueeView: NSView {
         animation.repeatCount = .infinity
         animation.isRemovedOnCompletion = false
         animation.timingFunction = CAMediaTimingFunction(name: .linear)
-        // A ProMotion display would otherwise recomposite the bar 120 times a second
-        // for as long as you are live. 60 is indistinguishable for scrolling text.
-        animation.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        // Every frame is WindowServer work for as long as you are live, and a
+        // ProMotion display would otherwise draw 120 of them a second.
+        let fps = Prefs.frameRate
+        animation.preferredFrameRateRange = CAFrameRateRange(minimum: min(fps, 10), maximum: fps, preferred: fps)
         scrollLayer.add(animation, forKey: Self.animationKey)
     }
+
+    var isScrolling: Bool { scrollLayer.animation(forKey: Self.animationKey) != nil }
 
     /// Restart from scratch, e.g. after the scroll speed preference changes.
     func restart() {

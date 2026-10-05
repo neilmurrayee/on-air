@@ -161,6 +161,27 @@ if !benchOnly {
         check(BannerController.frame(full: full, visible: dockHidden).minY == 0, "auto, dock hidden")
     }
 
+    test("the red frame hugs the screen edges without overlapping corners") {
+        let screen = NSRect(x: 1000, y: -200, width: 1600, height: 900)
+        let strips = BannerController.borderFrames(full: screen, width: 4)
+        check(strips.count == 4, "four strips")
+        let area = strips.reduce(0) { $0 + $1.width * $1.height }
+        check(area == 2 * 1600 * 4 + 2 * 4 * (900 - 8), "strips overlap or leave gaps: area \(area)")
+        check(strips.allSatisfy { screen.contains($0) }, "a strip leaves the screen")
+    }
+
+    test("the bar holds still by default, and scrolls when asked") {
+        let view = MarqueeView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
+        view.layout()
+        check(!view.isScrolling, "still bar should not animate")
+        Prefs.scroll = true
+        view.restart()
+        check(view.isScrolling, "should scroll")
+        Prefs.scroll = false
+        view.restart()
+        check(!view.isScrolling, "should stop again")
+    }
+
     test("banner spans the screen it is on, not the main one") {
         let second = NSRect(x: 1000, y: -200, width: 1600, height: 900)
         let f = BannerController.frame(full: second, visible: second)

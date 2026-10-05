@@ -15,6 +15,10 @@ enum Prefs {
             Key.matchDockHeight: true,
             Key.lastDockHeight: 52.0,
             Key.speed: 70.0,           // points per second
+            Key.frameRate: 60.0,
+            Key.scroll: false,         // a still bar costs nothing; a scrolling one, ~9% WindowServer CPU
+            Key.showBorder: true,
+            Key.borderWidth: 4.0,
             Key.allScreens: true,
             Key.position: Position.bottomEdge.rawValue,
             Key.behindDock: true,
@@ -28,6 +32,10 @@ enum Prefs {
         static let text = "bannerText"
         static let height = "bannerHeight"
         static let speed = "scrollSpeed"
+        static let frameRate = "scrollFrameRate"
+        static let scroll = "scroll"
+        static let showBorder = "showBorder"
+        static let borderWidth = "borderWidth"
         static let allScreens = "allScreens"
         static let position = "bannerPosition"
         static let matchDockHeight = "matchDockHeight"
@@ -65,6 +73,31 @@ enum Prefs {
     static var speed: CGFloat {
         get { max(10, min(400, CGFloat(d.double(forKey: Key.speed)))) }
         set { d.set(Double(newValue), forKey: Key.speed) }
+    }
+
+    /// Most frames per second the scroll may draw. Every frame is work for
+    /// WindowServer for as long as you are live, so less is cheaper.
+    static var frameRate: Float {
+        get { max(10, min(120, d.float(forKey: Key.frameRate))) }
+        set { d.set(newValue, forKey: Key.frameRate) }
+    }
+
+    /// Scroll the banner text. Off, the bar holds still, which costs WindowServer
+    /// nothing once drawn; on, it redraws every frame for as long as you are live.
+    static var scroll: Bool {
+        get { d.bool(forKey: Key.scroll) }
+        set { d.set(newValue, forKey: Key.scroll) }
+    }
+
+    /// A red frame around the whole screen while live.
+    static var showBorder: Bool {
+        get { d.bool(forKey: Key.showBorder) }
+        set { d.set(newValue, forKey: Key.showBorder) }
+    }
+
+    static var borderWidth: CGFloat {
+        get { max(1, min(20, CGFloat(d.double(forKey: Key.borderWidth)))) }
+        set { d.set(Double(newValue), forKey: Key.borderWidth) }
     }
 
     static var allScreens: Bool {

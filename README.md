@@ -3,13 +3,13 @@
 [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue)](#)
 [![MIT](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 
-A red **LIVE ON AIR** marquee that appears along the bottom edge of the screen
-whenever your camera or microphone goes live, so you don't forget you're being
-seen or heard.
+A red **LIVE ON AIR** bar along the bottom edge of the screen, and a thin red frame
+around it, whenever your camera or microphone goes live, so you don't forget you're
+being seen or heard.
 
-It sits one window level *behind* the Dock and matches the Dock's height, so the
-text scrolls along the very bottom of the screen and slides out of sight behind the
-Dock as it passes. It
+The bar sits one window level *behind* the Dock and matches the Dock's height, with
+the message repeated along it so it shows either side of the Dock. It can also
+scroll, marquee-style, sliding out of sight behind the Dock as it passes. It
 floats above every ordinary app window, shows on every Space and over full-screen
 apps, and is picked up by screen sharing and recording — so anyone watching your
 screen sees it too.
@@ -87,8 +87,12 @@ every time you muted and unmuted mid-call.
   reserves, tracking it live if you resize the Dock; or pick a fixed slim (22),
   medium (28) or tall (40). The text scales with the height. If the Dock is
   auto-hidden or mounted on a side, the last height seen is reused.
+- **Red border around the screen** — on by default.
+- **Scroll the text** — off by default. Still, the bar and border cost nothing
+  once drawn; scrolling makes WindowServer redraw every frame for as long as you
+  are live, about 7% of its CPU on a 60 Hz display (more on 120 Hz).
 - **Scroll speed** — slow, normal, fast.
-- **Scroll behind the Dock** — on by default. Turn it off to float the banner
+- **Bar behind the Dock** — on by default. Turn it off to float the banner
   above the Dock and the menu bar instead.
 - **Show on all displays** — one banner per screen, or just the main one.
 - **Ignore** — mute a specific device or app. Useful for virtual audio devices
@@ -107,6 +111,8 @@ Everything lives in `UserDefaults` under `com.local.onair`:
 defaults write com.local.onair bannerText "ON AIR — DO NOT DISTURB"
 defaults write com.local.onair bannerHeight -float 34
 defaults write com.local.onair scrollSpeed -float 90
+defaults write com.local.onair scrollFrameRate -float 30   # cheaper scrolling
+defaults write com.local.onair borderWidth -float 6
 ```
 
 Quit and relaunch to pick these up.
