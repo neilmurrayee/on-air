@@ -14,8 +14,10 @@ final class BannerWindow: NSPanel {
             backing: .buffered,
             defer: false)
 
-        isOpaque = false
-        backgroundColor = .clear
+        // The bar is solid red edge to edge. Saying so lets WindowServer skip
+        // blending it with whatever is underneath.
+        isOpaque = true
+        backgroundColor = MarqueeView.barColor
         hasShadow = false
         ignoresMouseEvents = true          // clicks pass straight through to whatever is beneath
         isReleasedWhenClosed = false
@@ -51,10 +53,46 @@ final class BannerWindow: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// Owns one banner window per screen and keeps their text, size and position current.
+/// One edge of the red frame around a screen: a thin, solid, click-through strip.
+///
+/// The frame is four opaque strips rather than one transparent screen-sized window
+/// with a red outline, because WindowServer would have to blend a screen-sized
+/// window into every frame of whatever moves beneath it, video calls included.
+/// Strips that never change cost nothing once drawn.
+final class BorderWindow: NSPanel {
+
+    init(frame: NSRect) {
+        super.init(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false)
+
+        isOpaque = true
+        backgroundColor = MarqueeView.barColor
+        hasShadow = false
+        ignoresMouseEvents = true
+        isReleasedWhenClosed = false
+        hidesOnDeactivate = false
+        isMovable = false
+        animationBehavior = .none
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        // Above the menu bar and full-screen apps, so the frame is never broken.
+        level = .screenSaver
+        sharingType = .readOnly
+        setFrame(frame, display: true)
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// Owns one banner window per screen, plus the red frame around each screen, and
+/// keeps their text, size and position current.
 final class BannerController {
 
     private var windows: [BannerWindow] = []
+    private var borders: [BorderWindow] = []
     private(set) var isShowing = false
 
     /// Text currently displayed, so we can skip redundant updates.
@@ -93,6 +131,8 @@ final class BannerController {
         isShowing = false
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
+        borders.forEach { $0.orderOut(nil) }
+        borders.removeAll()
     }
 
     /// Cheap tick: reposition only if the target geometry actually moved, so a
@@ -154,13 +194,34 @@ final class BannerController {
             window.marquee.needsLayout = true
             window.orderFrontRegardless()
         }
+
+        // The frame changes only with the screens or the preference, so simply
+        // replace it rather than reconcile it.
+        borders.forEach { $0.orderOut(nil) }
+        borders = Prefs.showBorder
+            ? screens.flatMap { Self.borderFrames(full: $0.frame, width: Prefs.borderWidth) }.map(BorderWindow.init)
+            : []
+        borders.forEach { $0.orderFrontRegardless() }
     }
 
-    /// The strip along the bottom of a screen that the banner should occupy.
-    private func frame(for screen: NSScreen) -> NSRect {
-        let full = screen.frame
-        let visible = screen.visibleFrame
+    /// Four strips just inside the edges of a screen: top and bottom full width,
+    /// left and right filling the gap between them so the corners do not overlap.
+    static func borderFrames(full: NSRect, width: CGFloat) -> [NSRect] {
+        [
+            NSRect(x: full.minX, y: full.maxY - width, width: full.width, height: width),
+            NSRect(x: full.minX, y: full.minY, width: full.width, height: width),
+            NSRect(x: full.minX, y: full.minY + width, width: width, height: full.height - 2 * width),
+            NSRect(x: full.maxX - width, y: full.minY + width, width: width, height: full.height - 2 * width),
+        ]
+    }
 
+    private func frame(for screen: NSScreen) -> NSRect {
+        Self.frame(full: screen.frame, visible: screen.visibleFrame)
+    }
+
+    /// The strip along the bottom of a screen that the banner should occupy, given
+    /// the screen's full frame and the part of it not claimed by the Dock or menu bar.
+    static func frame(full: NSRect, visible: NSRect) -> NSRect {
         // How much space something (almost always the Dock) is claiming at the bottom.
         // An auto-hidden Dock still reserves a few points, hence the threshold.
         let claimedAtBottom = visible.minY - full.minY

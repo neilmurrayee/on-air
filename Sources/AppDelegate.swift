@@ -81,13 +81,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return parts.joined(separator: "   \u{25CF}   ")
     }
 
+    private static let debugging = ProcessInfo.processInfo.environment["ONAIR_DEBUG"] == "1"
+
     /// Run with ONAIR_DEBUG=1 to trace what the detector sees, once a second.
+    /// `read=` is how long the hardware read took, off the main thread.
     private func debugLog() {
-        guard ProcessInfo.processInfo.environment["ONAIR_DEBUG"] == "1" else { return }
+        guard Self.debugging else { return }
         let stamp = Date().formatted(date: .omitted, time: .standard)
         let fields = "watchCam=\(Prefs.watchCamera) watchMic=\(Prefs.watchMic)"
             + " cam=\(monitor.cameraIsLive) mic=\(monitor.micIsLive) live=\(monitor.isLive)"
             + " showing=\(banner.isShowing) apps=\(monitor.liveAppNames)"
+            + String(format: " read=%.1fms", monitor.lastReadDuration * 1000)
         print("[\(stamp)] \(fields)")
         fflush(stdout)
     }
@@ -98,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
+        menu.autoenablesItems = false   // so "Scroll speed" can grey out when the text is still
         statusItem.menu = menu
         updateStatusIcon(live: false)
     }
@@ -125,7 +130,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        monitor.poll()
+        // Built from the last reading, at most a second old. Re-reading here would
+        // block the menu on coreaudiod, which is exactly what polling off the main
+        // thread is for avoiding.
         menu.removeAllItems()
 
         // --- Status ---
@@ -175,7 +182,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sizeItem.submenu = sizeMenu
         menu.addItem(sizeItem)
 
+        menu.addItem(check("Red border around the screen", #selector(toggleBorder), Prefs.showBorder))
+        menu.addItem(check("Scroll the text", #selector(toggleScroll), Prefs.scroll))
+
         let speedItem = NSMenuItem(title: "Scroll speed", action: nil, keyEquivalent: "")
+        speedItem.isEnabled = Prefs.scroll
         let speedMenu = NSMenu()
         for (title, value) in [("Slow", 40.0), ("Normal", 70.0), ("Fast", 120.0)] {
             let item = check(title, #selector(setSpeed(_:)), abs(Prefs.speed - value) < 0.5)
@@ -185,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         speedItem.submenu = speedMenu
         menu.addItem(speedItem)
 
-        menu.addItem(check("Scroll behind the Dock", #selector(toggleBehindDock), Prefs.behindDock))
+        menu.addItem(check("Bar behind the Dock", #selector(toggleBehindDock), Prefs.behindDock))
         menu.addItem(check("Show on all displays", #selector(toggleAllScreens), Prefs.allScreens))
 
         menu.addItem(.separator())
@@ -278,6 +289,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleBehindDock() {
         Prefs.behindDock.toggle()
+        banner.applyPreferences()
+    }
+
+    @objc private func toggleBorder() {
+        Prefs.showBorder.toggle()
+        banner.applyPreferences()
+    }
+
+    @objc private func toggleScroll() {
+        Prefs.scroll.toggle()
         banner.applyPreferences()
     }
 

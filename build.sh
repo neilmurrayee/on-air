@@ -8,6 +8,20 @@ APP_NAME="On Air"
 BUNDLE="build/${APP_NAME}.app"
 BINARY="OnAir"
 
+# ./build.sh --test   logic tests plus performance budgets (see Tests/main.swift)
+# ./build.sh --bench  performance only, longer runs
+# Native architecture only, and no app bundle: just the sources and the tests.
+if [[ "${1:-}" == "--test" || "${1:-}" == "--bench" ]]; then
+    mkdir -p build
+    SOURCES=()
+    for f in Sources/*.swift; do [[ "$f" == Sources/main.swift ]] || SOURCES+=("$f"); done
+    echo "Compiling tests…"
+    swiftc -swift-version 5 -O \
+        -framework AppKit -framework CoreAudio -framework CoreMediaIO -framework ServiceManagement \
+        -o build/OnAirTests "${SOURCES[@]}" Tests/*.swift
+    exec build/OnAirTests "$1"
+fi
+
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 
